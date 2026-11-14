@@ -24,6 +24,7 @@ import os
 import sys
 import inspect
 import json
+from collections import Counter
 from pathlib import Path
 from datetime import datetime, timezone
 from IPython.display import Code, Markdown, display
@@ -43,8 +44,11 @@ from ptc_demo.visuals import benchmark_dashboard
 
 def show_execution(result):
     """Show the actual program and routing metadata without dumping expense payloads."""
-    print(f"{result['approach']} · {result['model_requests']} model requests · "
-          f"{result['tool_invocations']} Python tool calls · correct={result['correctness']}")
+    counts = Counter(item['call']['name'] for item in result['tool_results'])
+    print(f"{result['approach']} · {len(SCHEMAS)} tools available · "
+          f"{result['model_requests']} API requests · {result['tool_invocations']} Python tool calls · "
+          f"correct={result['correctness']}")
+    display({tool['name']: counts[tool['name']] for tool in SCHEMAS})
     display(Markdown('**Question, rules and orchestration instruction sent to the model:**'))
     display(Code(result['prompt'], language='text'))
     if result['programs']:
@@ -128,14 +132,29 @@ print('Budgets:', data['budgets'])
 # MAGIC ## What the model can call
 # MAGIC These Python functions and JSON schemas live in `ptc_demo/tools.py`; this cell shows the
 # MAGIC actual implementation and tool contract used in both experiments.
+# MAGIC The reference call plan is one team lookup, one expense lookup per employee, and one budget
+# MAGIC lookup per unique level. The model may choose a different plan; actual calls are printed after each run.
 
 # COMMAND ----------
 print('Question:', QUESTION)
 print('Shared business rules:', RULES)
+unique_levels = {employee['level'] for employee in data['employees']}
+reference_calls = {'get_team_members': 1, 'get_expenses': len(data['employees']),
+                   'get_budget_by_level': len(unique_levels)}
+print(f"Reference plan: {len(SCHEMAS)} available tools; {sum(reference_calls.values())} Python calls "
+      f"({reference_calls}) for {len(data['employees'])} employees and {len(unique_levels)} levels.")
 display(Code(inspect.getsource(TravelTools), language='python'))
 display(Code(json.dumps([
     {key: tool[key] for key in ('name', 'description', 'parameters', 'output_schema')}
     for tool in SCHEMAS], indent=2), language='json'))
+
+# COMMAND ----------
+# MAGIC %md
+# MAGIC ## What PTC changes
+# MAGIC PTC does not remove the Python calls: it lets model-written JavaScript coordinate them,
+# MAGIC process intermediate results in OpenAI's hosted runtime, and return a compact answer.
+# MAGIC Standard calling returns the full tool results to model context. We compare actual call counts,
+# MAGIC API request counts, correctness and token usage below.
 
 # COMMAND ----------
 # MAGIC %md
