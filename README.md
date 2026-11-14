@@ -58,7 +58,14 @@ Small-data median token reduction was **1.15%**, while PTC took longer.
 Standard runs 2 and 3 benefited from cached inputs; PTC reported none. These
 token totals therefore do not establish a corresponding cost reduction.
 
-Real audit files (local only, excluded from the GitHub repository):
+The local notebook shows an 8 KB metrics-only summary automatically when the
+ignored `artifacts/presentation/dashboard_summary.json` is present. It is kept
+local; raw requests, responses, prompts and tool results also stay out of Git.
+A fresh clone needs its own live benchmark or copied saved results before the
+chart can display. The notebook prints this clearly instead of silently showing
+nothing.
+
+Full audit files (local only, excluded from the GitHub repository):
 
 - [Smoke](artifacts/live-20261114T053905774830Z/smoke.json)
 - Full data: [JSON](artifacts/live-20261114T053905774830Z/full/results.json),
@@ -68,9 +75,9 @@ Real audit files (local only, excluded from the GitHub repository):
   [CSV](artifacts/live-20261114T053905774830Z/small/runs.csv),
   [chart](artifacts/live-20261114T053905774830Z/small/tokens.png)
 
-Set notebook `SAVED_RESULTS` to the full or small `results.json` path to show
-these as explicitly labelled historical results. Copy the artifact folder to
-Databricks alongside the project if using that fallback there.
+Set notebook `SAVED_RESULTS` and optionally `SAVED_SMALL_RESULTS` to full or
+small `results.json` paths to show those complete, explicitly labelled runs.
+Copy the chosen files to Databricks, or enable a live benchmark to populate the chart.
 
 ## Local setup and commands
 
@@ -239,6 +246,7 @@ in cost or latency; this demo makes no cost claim.
 - `runners.py`: shared API loop, secure client creation and two-tool smoke test.
 - `benchmark.py`: explicit runs, alternating benchmark, audit files, table/chart.
 - `visuals.py`: Plotly comparison view shared by live and saved notebook results.
+- `artifacts/presentation/dashboard_summary.json`: local metrics-only fallback; excluded from GitHub.
 - `tests/test_core.py`: offline data, arithmetic, validation, usage and protocol checks.
 
 Tests use simulated protocol responses only where a live API would otherwise be

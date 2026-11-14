@@ -42,6 +42,7 @@ RUN_BENCHMARK = False
 RUN_SMALL = False
 SAVED_RESULTS = ''  # Explicit fallback: /.../results.json from a previous real run.
 SAVED_SMALL_RESULTS = ''  # Optional small results.json for the dashboard's dataset dropdown.
+SAVED_DASHBOARD = ARTIFACTS / 'presentation/dashboard_summary.json'
 
 # Only load a key when a live action is enabled. Never display the key.
 client = None
@@ -209,3 +210,11 @@ if SAVED_RESULTS:
     for result in saved['runs']:
         for program in result['programs']:
             print(program)
+elif not RUN_BENCHMARK and not RUN_SMALL and SAVED_DASHBOARD.exists():
+    import json
+    snapshot = json.loads(SAVED_DASHBOARD.read_text())
+    print('Showing saved benchmark metrics. No API calls were made.')
+    fig = benchmark_dashboard(snapshot['datasets'], saved=True)
+    displayHTML(fig.to_html(full_html=False, include_plotlyjs=True))
+elif not RUN_BENCHMARK and not RUN_SMALL:
+    print('No chart data is available yet. Copy benchmark artifacts into ARTIFACTS and set SAVED_RESULTS, or enable RUN_BENCHMARK (paid API calls).')
