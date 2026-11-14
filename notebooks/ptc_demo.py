@@ -94,7 +94,7 @@ def log_mlflow_results(runs, dataset, source='live'):
             metrics['elapsed_seconds'] = result['elapsed_seconds']
         if result.get('usage_complete'):
             metrics.update({key: value for key, value in result.get('usage', {}).items()
-                            if value is not None})
+                            if value is not None and key != 'cached_input_tokens'})
         tags = {'returned_models': ','.join(result.get('returned_models', []))}
         if result.get('error'):
             tags['error_type'] = result['error'].get('type', 'unknown')
@@ -119,16 +119,15 @@ SAVED_DASHBOARD = ARTIFACTS / 'presentation/dashboard_summary.json'
 
 # Only load a key when a live action is enabled. Never display the key.
 client = None
+MLFLOW_TRACING_ENABLED = False
 if RUN_SMOKE or RUN_SINGLE or RUN_BENCHMARK or RUN_SMALL:
     import mlflow
     from packaging.version import Version
 
     if Version(mlflow.__version__) >= Version('2.22.0'):
-        try:
-            mlflow.openai.autolog()
-            print(f'MLflow OpenAI traces enabled ({mlflow.__version__}).')
-        except Exception as exc:
-            print(f'MLflow run logging enabled; OpenAI tracing unavailable ({type(exc).__name__}).')
+        mlflow.openai.autolog(disable=True)
+        MLFLOW_TRACING_ENABLED = True
+        print(f'MLflow traces enabled; cached-token counts hidden ({mlflow.__version__}).')
     else:
         print(f'MLflow run logging enabled; Responses API traces need MLflow 2.22+ '
               f'(cluster has {mlflow.__version__}).')
@@ -143,8 +142,9 @@ if RUN_SMOKE or RUN_SINGLE or RUN_BENCHMARK or RUN_SMALL:
 # MAGIC ## MLflow run history
 # MAGIC Each smoke, single, benchmark, or loaded saved result is logged to the active notebook
 # MAGIC experiment. Compare correctness, model requests, Python tool calls, elapsed time, and
-# MAGIC complete token usage in **Runs**. With MLflow 2.22+, live OpenAI requests also appear in
-# MAGIC **Traces**. Traces include request/response content; this demo uses synthetic data.
+# MAGIC input/output/total tokens in **Runs** (cached-token counts are omitted). With MLflow 2.22+,
+# MAGIC each trace shows the question, OpenAI request spans, Python tool spans, and final model answer
+# MAGIC in **Traces**. Traces include request/response and tool contents; this demo uses synthetic data.
 
 # COMMAND ----------
 # MAGIC %md
@@ -157,7 +157,7 @@ if RUN_SMOKE or RUN_SINGLE or RUN_BENCHMARK or RUN_SMALL:
 # COMMAND ----------
 smoke_result = None
 if RUN_SMOKE:
-    smoke_result = smoke(client, MODEL)
+    smoke_result = smoke(client, MODEL, trace=MLFLOW_TRACING_ENABLED)
     save_json(smoke_result, ARTIFACTS / 'smoke.json')
     print({k: smoke_result[k] for k in ('correctness', 'usage', 'error')})
     for program in smoke_result['programs']:
@@ -216,7 +216,7 @@ display(Code(json.dumps([
 # COMMAND ----------
 standard = None
 if RUN_SINGLE:
-    standard = run(client, data, 'standard', MODEL)
+    standard = run(client, data, 'standard', MODEL, trace=MLFLOW_TRACING_ENABLED)
     save_json(standard, ARTIFACTS / 'standard-single.json')
     log_mlflow_results([standard], 'small' if data['config']['small'] else 'full')
     print(standard['answer'])
@@ -234,7 +234,7 @@ if RUN_SINGLE:
         import json
         smoke_result = json.loads((ARTIFACTS / 'smoke.json').read_text())
     require_smoke(smoke_result, MODEL)
-    ptc = run(client, data, 'ptc', MODEL)
+    ptc = run(client, data, 'ptc', MODEL, trace=MLFLOW_TRACING_ENABLED)
     save_json(ptc, ARTIFACTS / 'ptc-single.json')
     log_mlflow_results([ptc], 'small' if data['config']['small'] else 'full')
     for program in ptc['programs']:
@@ -277,7 +277,8 @@ if RUN_BENCHMARK:
         import json
         smoke_result = json.loads((ARTIFACTS / 'smoke.json').read_text())
     result_dir = ARTIFACTS / ('full-' + datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%S%fZ'))
-    results, result_dir = benchmark(client, data, smoke_result, MODEL, out_dir=result_dir)
+    results, result_dir = benchmark(client, data, smoke_result, MODEL, out_dir=result_dir,
+                                     trace=MLFLOW_TRACING_ENABLED)
     log_mlflow_results(results['runs'], 'full')
     print_table(results['runs'])
     show_benchmark_paths(results['runs'])
@@ -302,7 +303,8 @@ if RUN_SMALL:
         import json
         smoke_result = json.loads((ARTIFACTS / 'smoke.json').read_text())
     small_dir = ARTIFACTS / ('small-' + datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%S%fZ'))
-    small_results, small_dir = benchmark(client, make_data(small=True), smoke_result, MODEL, out_dir=small_dir)
+    small_results, small_dir = benchmark(client, make_data(small=True), smoke_result, MODEL,
+                                         out_dir=small_dir, trace=MLFLOW_TRACING_ENABLED)
     log_mlflow_results(small_results['runs'], 'small')
     print_table(small_results['runs'])
     show_benchmark_paths(small_results['runs'])

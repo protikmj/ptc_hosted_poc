@@ -52,7 +52,8 @@ def require_smoke(smoke_result, model):
         raise ValueError('Run and inspect a successful hosted-PTC smoke test with this model first.')
 
 
-def benchmark(client, data, smoke_result, model=DEFAULT_MODEL, repetitions=3, out_dir=None):
+def benchmark(client, data, smoke_result, model=DEFAULT_MODEL, repetitions=3, out_dir=None,
+              trace=False):
     require_smoke(smoke_result, model)
     if type(repetitions) is not int or not 1 <= repetitions <= 10:
         raise ValueError('repetitions must be between 1 and 10')
@@ -66,7 +67,8 @@ def benchmark(client, data, smoke_result, model=DEFAULT_MODEL, repetitions=3, ou
     for repetition in range(1, repetitions + 1):
         order = ('standard', 'ptc') if repetition % 2 else ('ptc', 'standard')
         for approach in order:
-            result = run(client, data, approach, model)
+            result = (run(client, data, approach, model, trace=True) if trace
+                      else run(client, data, approach, model))
             result['repetition'] = repetition
             payload['runs'].append(result)
             payload['summary'] = summarize(payload['runs'])

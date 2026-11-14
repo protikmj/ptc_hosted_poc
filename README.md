@@ -151,15 +151,19 @@ The notebook uses the Databricks-provided MLflow tracking server and active
 notebook experiment. Each smoke, single, benchmark, or explicitly loaded saved
 result is logged as a run. Compare `approach`, `dataset`, `model`, and
 `repetition` alongside correctness, API request count, Python tool-call count,
-elapsed time, and complete token usage in the experiment's **Runs** view.
+elapsed time, and input/output/total token counts in the experiment's **Runs** view.
+Cached-input token counts are omitted from new MLflow runs and traces.
 Incomplete usage is marked and token metrics are omitted rather than recorded as
 zero. Raw result JSON and tool payloads are not uploaded as run artifacts.
 
 When live actions are enabled and the cluster has MLflow 2.22 or later, the
-notebook also enables OpenAI auto-tracing for Responses API calls. Traces appear
-in the experiment's **Traces** view. Traces can contain prompts and model
-responses; this demo's dataset is synthetic. The Python tool-call count is a run
-metric; per-call arguments and replies remain in the audit JSON.
+notebook wraps each run in a manual parent trace. In the experiment's **Traces**
+view, the waterfall shows the prompt, nested OpenAI requests, parallel Python
+tool spans with their arguments and outputs, and the final model response.
+Hosted JavaScript execution is part of the OpenAI response span because the API
+does not expose a separate runtime span. Traces can contain prompts, model
+responses and tool data; this demo's dataset is synthetic. Raw result JSON is
+not uploaded as a run artifact. Older MLflow runs and traces remain unchanged.
 
 ## Interactive presentation view
 

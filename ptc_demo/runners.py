@@ -1,6 +1,7 @@
 """Explicit Responses API loop. Generated JavaScript is never executed locally."""
 import argparse
 import copy
+import contextvars
 import json
 import os
 import time
@@ -52,8 +53,12 @@ def sum_usage(usages):
     return result
 
 
-def run_loop(client, approach, model, prompt, schemas, implementations,
-             answer_schema=None, max_requests=12, max_output_tokens=8192, max_tool_calls=100):
+def _run_loop(client, approach, model, prompt, schemas, implementations,
+              answer_schema=None, max_requests=12, max_output_tokens=8192,
+              max_tool_calls=100, trace=False):
+    if trace:
+        import mlflow
+
     if approach not in ('standard', 'ptc'):
         raise ValueError('approach must be standard or ptc')
     tools = copy.deepcopy(schemas)
@@ -80,8 +85,31 @@ def run_loop(client, approach, model, prompt, schemas, implementations,
                 request['text'] = {'format': {'type': 'json_schema', 'name': 'answer',
                                               'strict': True, 'schema': answer_schema}}
             result['model_requests'] += 1
-            response = client.responses.create(**request)
-            raw = response.model_dump(exclude_none=True, by_alias=True)
+            if trace:
+                with mlflow.start_span(
+                        name=f"OpenAI Responses request {result['model_requests']}",
+                        span_type='CHAT_MODEL') as span:
+                    span.set_inputs({'model': model, 'turn': result['model_requests'],
+                                     'input_item_count': len(inputs)})
+                    response = client.responses.create(**request)
+                    raw = response.model_dump(exclude_none=True, by_alias=True)
+                    usage = raw.get('usage') or {}
+                    token_usage = {key: usage[key] for key in
+                                   ('input_tokens', 'output_tokens', 'total_tokens')
+                                   if usage.get(key) is not None}
+                    span.set_outputs({
+                        'model': raw.get('model'),
+                        'status': raw.get('status'),
+                        'output': [item for item in raw.get('output', [])
+                                   if item.get('type') in {
+                                       'program', 'program_output', 'function_call', 'message'}],
+                        'usage': token_usage,
+                    })
+                    if token_usage:
+                        span.set_attribute('mlflow.chat.tokenUsage', token_usage)
+            else:
+                response = client.responses.create(**request)
+                raw = response.model_dump(exclude_none=True, by_alias=True)
             result['responses'].append(raw)
             if not raw.get('usage'):
                 result['usage_complete'] = False
@@ -101,7 +129,7 @@ def run_loop(client, approach, model, prompt, schemas, implementations,
                     if approach == 'ptc' and call.get('caller', {}).get('type') != 'program':
                         raise RuntimeError('Expected a hosted program caller')
 
-                def invoke(call):
+                def invoke_tool(call):
                     try:
                         args = json.loads(call['arguments'])
                         if not isinstance(args, dict):
@@ -112,9 +140,30 @@ def run_loop(client, approach, model, prompt, schemas, implementations,
                         # Tool errors are visible to both the audit and the model/runtime.
                         return {'error': type(exc).__name__}, type(exc).__name__
 
+                def invoke(call):
+                    if not trace:
+                        return invoke_tool(call)
+                    with mlflow.start_span(name=f"Python tool: {call['name']}",
+                                           span_type='TOOL') as span:
+                        span.set_inputs({'arguments': call['arguments'],
+                                         'caller': call.get('caller'),
+                                         'destination': ('hosted runtime' if approach == 'ptc'
+                                                         else 'model context')})
+                        value, error = invoke_tool(call)
+                        span.set_outputs({'result': value, 'error': error})
+                        return value, error
+
+                def invoke_in_context(task):
+                    context, call = task
+                    return context.run(invoke, call)
+
                 result['tool_invocations'] += len(calls)
                 with ThreadPoolExecutor(max_workers=min(8, len(calls))) as pool:
-                    values = list(pool.map(invoke, calls))
+                    if trace:
+                        tasks = [(contextvars.copy_context(), call) for call in calls]
+                        values = list(pool.map(invoke_in_context, tasks))
+                    else:
+                        values = list(pool.map(invoke, calls))
                 for call, (value, error) in zip(calls, values):
                     reply = dict(type='function_call_output', call_id=call['call_id'],
                                  output=json.dumps(value, separators=(',', ':')))
@@ -148,6 +197,25 @@ def run_loop(client, approach, model, prompt, schemas, implementations,
     return result
 
 
+def run_loop(client, approach, model, prompt, schemas, implementations,
+             answer_schema=None, max_requests=12, max_output_tokens=8192,
+             max_tool_calls=100, trace=False):
+    if not trace:
+        return _run_loop(client, approach, model, prompt, schemas, implementations,
+                         answer_schema, max_requests, max_output_tokens, max_tool_calls)
+
+    import mlflow
+
+    with mlflow.start_span(name=f'{approach} run', span_type='CHAIN') as span:
+        span.set_inputs({'question': prompt, 'model': model, 'approach': approach})
+        result = _run_loop(client, approach, model, prompt, schemas, implementations,
+                           answer_schema, max_requests, max_output_tokens, max_tool_calls,
+                           trace=True)
+        span.set_outputs({'final_response': result.get('final_text'),
+                          'answer': result.get('answer'), 'error': result.get('error')})
+    return result
+
+
 def run(client, data, approach, model=DEFAULT_MODEL, **limits):
     orchestration = ('Generate orchestration code using hosted PTC. Retrieve, aggregate and filter '
                      'in code. Run independent calls concurrently and emit only the compact answer.'
@@ -173,7 +241,7 @@ def hosted_evidence(result):
     return bool(programs and callers and callers <= programs and programs <= completed)
 
 
-def smoke(client, model=DEFAULT_MODEL):
+def smoke(client, model=DEFAULT_MODEL, *, trace=False):
     def get_numbers():
         return {'numbers': [2, 3, 5]}
 
@@ -189,7 +257,8 @@ def smoke(client, model=DEFAULT_MODEL):
         'numbers and multiply by the multiplier. Emit only {"value": integer}. '
         'Return that same JSON as your final answer. Do not retry tools.',
         schemas, dict(get_numbers=get_numbers, get_multiplier=get_multiplier),
-        object_schema({'value': INTEGER}), max_requests=6, max_output_tokens=2048, max_tool_calls=4)
+        object_schema({'value': INTEGER}), max_requests=6, max_output_tokens=2048,
+        max_tool_calls=4, trace=trace)
     result['correctness'] = (result['error'] is None and result['answer'] == {'value': 70}
         and hosted_evidence(result) and result['usage_complete']
         and {t['call']['name'] for t in result['tool_results']} == {'get_numbers', 'get_multiplier'})
