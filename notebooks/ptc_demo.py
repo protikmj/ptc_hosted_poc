@@ -75,6 +75,37 @@ def show_benchmark_paths(runs):
         if example:
             show_execution(example)
 
+
+def log_mlflow_results(runs, dataset, source='live'):
+    import mlflow
+
+    for result in runs:
+        repetition = result.get('repetition', 1)
+        params = {'dataset': dataset, 'approach': result['approach'],
+                  'model': result['requested_model'], 'repetition': repetition,
+                  'source': source}
+        params.update({f"data_{key}": value
+                       for key, value in result.get('dataset_config', {}).items()})
+        metrics = {'correctness': int(bool(result.get('correctness'))),
+                   'usage_complete': int(bool(result.get('usage_complete'))),
+                   'model_requests': result.get('model_requests', 0),
+                   'tool_invocations': result.get('tool_invocations', 0)}
+        if result.get('elapsed_seconds') is not None:
+            metrics['elapsed_seconds'] = result['elapsed_seconds']
+        if result.get('usage_complete'):
+            metrics.update({key: value for key, value in result.get('usage', {}).items()
+                            if value is not None})
+        tags = {'returned_models': ','.join(result.get('returned_models', []))}
+        if result.get('error'):
+            tags['error_type'] = result['error'].get('type', 'unknown')
+
+        with mlflow.start_run(
+                run_name=f"{source}-{dataset}-{result['approach']}-r{repetition}"):
+            mlflow.log_params(params)
+            mlflow.set_tags(tags)
+            mlflow.log_metrics(metrics)
+
+
 # COMMAND ----------
 MODEL = DEFAULT_MODEL  # Use the exact same identifier for every run.
 ARTIFACTS = PROJECT_ROOT / 'artifacts'  # Or a writable /Volumes/... path.
@@ -89,11 +120,31 @@ SAVED_DASHBOARD = ARTIFACTS / 'presentation/dashboard_summary.json'
 # Only load a key when a live action is enabled. Never display the key.
 client = None
 if RUN_SMOKE or RUN_SINGLE or RUN_BENCHMARK or RUN_SMALL:
+    import mlflow
+    from packaging.version import Version
+
+    if Version(mlflow.__version__) >= Version('2.22.0'):
+        try:
+            mlflow.openai.autolog()
+            print(f'MLflow OpenAI traces enabled ({mlflow.__version__}).')
+        except Exception as exc:
+            print(f'MLflow run logging enabled; OpenAI tracing unavailable ({type(exc).__name__}).')
+    else:
+        print(f'MLflow run logging enabled; Responses API traces need MLflow 2.22+ '
+              f'(cluster has {mlflow.__version__}).')
     api_key = os.environ.get('OPENAI_API_KEY')
     if not api_key:
         api_key = dbutils.secrets.get(scope='YOUR_SCOPE', key='openai-api-key')
     client = make_client(api_key)
     del api_key
+
+# COMMAND ----------
+# MAGIC %md
+# MAGIC ## MLflow run history
+# MAGIC Each smoke, single, benchmark, or loaded saved result is logged to the active notebook
+# MAGIC experiment. Compare correctness, model requests, Python tool calls, elapsed time, and
+# MAGIC complete token usage in **Runs**. With MLflow 2.22+, live OpenAI requests also appear in
+# MAGIC **Traces**. Traces include request/response content; this demo uses synthetic data.
 
 # COMMAND ----------
 # MAGIC %md
@@ -111,6 +162,7 @@ if RUN_SMOKE:
     print({k: smoke_result[k] for k in ('correctness', 'usage', 'error')})
     for program in smoke_result['programs']:
         print(program)
+    log_mlflow_results([smoke_result], 'smoke')
     require_smoke(smoke_result, MODEL)
 
 # COMMAND ----------
@@ -166,6 +218,7 @@ standard = None
 if RUN_SINGLE:
     standard = run(client, data, 'standard', MODEL)
     save_json(standard, ARTIFACTS / 'standard-single.json')
+    log_mlflow_results([standard], 'small' if data['config']['small'] else 'full')
     print(standard['answer'])
     print_table([standard])
 
@@ -183,6 +236,7 @@ if RUN_SINGLE:
     require_smoke(smoke_result, MODEL)
     ptc = run(client, data, 'ptc', MODEL)
     save_json(ptc, ARTIFACTS / 'ptc-single.json')
+    log_mlflow_results([ptc], 'small' if data['config']['small'] else 'full')
     for program in ptc['programs']:
         print(program)
     print(ptc['answer'])
@@ -224,6 +278,7 @@ if RUN_BENCHMARK:
         smoke_result = json.loads((ARTIFACTS / 'smoke.json').read_text())
     result_dir = ARTIFACTS / ('full-' + datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%S%fZ'))
     results, result_dir = benchmark(client, data, smoke_result, MODEL, out_dir=result_dir)
+    log_mlflow_results(results['runs'], 'full')
     print_table(results['runs'])
     show_benchmark_paths(results['runs'])
     token_chart(results['runs'], result_dir / 'tokens.png')
@@ -248,6 +303,7 @@ if RUN_SMALL:
         smoke_result = json.loads((ARTIFACTS / 'smoke.json').read_text())
     small_dir = ARTIFACTS / ('small-' + datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%S%fZ'))
     small_results, small_dir = benchmark(client, make_data(small=True), smoke_result, MODEL, out_dir=small_dir)
+    log_mlflow_results(small_results['runs'], 'small')
     print_table(small_results['runs'])
     show_benchmark_paths(small_results['runs'])
     token_chart(small_results['runs'], small_dir / 'tokens.png')
@@ -269,10 +325,13 @@ if RUN_SMALL:
 # COMMAND ----------
 if SAVED_RESULTS:
     saved = load_saved(SAVED_RESULTS)
+    log_mlflow_results(saved['runs'], 'primary', source='saved')
     print_table(saved['runs'])
     datasets = {'Primary dataset': saved}
     if SAVED_SMALL_RESULTS:
-        datasets = {'Full dataset': saved, 'Small dataset': load_saved(SAVED_SMALL_RESULTS)}
+        saved_small = load_saved(SAVED_SMALL_RESULTS)
+        log_mlflow_results(saved_small['runs'], 'small', source='saved')
+        datasets = {'Full dataset': saved, 'Small dataset': saved_small}
     fig = benchmark_dashboard(datasets, saved=True)
     fig.write_html(Path(SAVED_RESULTS).with_name('dashboard.html'), include_plotlyjs=True)
     displayHTML(fig.to_html(full_html=False, include_plotlyjs=True))

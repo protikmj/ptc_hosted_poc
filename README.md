@@ -145,6 +145,22 @@ setup and display helpers are Databricks-specific; the implementation modules
 and CLI run locally. Databricks secret permissions, outbound API access, dependency
 compatibility and rendering still need validation on your chosen cluster.
 
+### MLflow
+
+The notebook uses the Databricks-provided MLflow tracking server and active
+notebook experiment. Each smoke, single, benchmark, or explicitly loaded saved
+result is logged as a run. Compare `approach`, `dataset`, `model`, and
+`repetition` alongside correctness, API request count, Python tool-call count,
+elapsed time, and complete token usage in the experiment's **Runs** view.
+Incomplete usage is marked and token metrics are omitted rather than recorded as
+zero. Raw result JSON and tool payloads are not uploaded as run artifacts.
+
+When live actions are enabled and the cluster has MLflow 2.22 or later, the
+notebook also enables OpenAI auto-tracing for Responses API calls. Traces appear
+in the experiment's **Traces** view. Traces can contain prompts and model
+responses; this demo's dataset is synthetic. The Python tool-call count is a run
+metric; per-call arguments and replies remain in the audit JSON.
+
 ## Interactive presentation view
 
 The notebook now displays a dark Plotly dashboard: exact-answer counts, median
