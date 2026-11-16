@@ -30,7 +30,7 @@ def make_client(api_key=None):
     from openai.types.responses.tool_param import ProgrammaticToolCalling
     from openai.types.responses.function_tool_param import FunctionToolParam
     if 'allowed_callers' not in FunctionToolParam.__annotations__:
-        raise RuntimeError('Install requirements.txt: SDK lacks hosted PTC fields.')
+        raise RuntimeError('OpenAI SDK lacks hosted PTC fields; run `uv sync` locally or `%uv sync` on Databricks Shared Serverless environment 5+.')
     # Fixed external API endpoint; do not accidentally benchmark a local gateway.
     return OpenAI(api_key=key, base_url='https://api.openai.com/v1', max_retries=0, timeout=90)
 

@@ -81,13 +81,11 @@ Copy the chosen files to Databricks, or enable a live benchmark to populate the 
 
 ## Local setup and commands
 
-Python 3.10+ (local validation used Python 3.14). From the project root:
+Python 3.10+ and [uv](https://docs.astral.sh/uv/getting-started/installation/). From the project root:
 
 ```sh
-python3 -m venv .venv
-source .venv/bin/activate
-python -m pip install -r requirements.txt
-python -m unittest discover -s tests -v
+uv sync
+uv run python -m unittest discover -s tests -v
 ```
 
 Supply `OPENAI_API_KEY` through your existing environment/secret manager. To enter
@@ -105,18 +103,18 @@ Run actions separately; each live command consumes API credits:
 
 ```sh
 # First: two trivial tools, maximum six requests, no retries.
-python -m ptc_demo.runners smoke
+uv run python -m ptc_demo.runners smoke
 
 # Inspect artifacts/smoke.json and the generated program before continuing.
-python -m ptc_demo.benchmark single --approach standard
-python -m ptc_demo.benchmark single --approach ptc
+uv run python -m ptc_demo.benchmark single --approach standard
+uv run python -m ptc_demo.benchmark single --approach ptc
 
 # Three repetitions per approach, alternating A/B then B/A then A/B.
-python -m ptc_demo.benchmark benchmark --out artifacts/full
-python -m ptc_demo.benchmark benchmark --small --out artifacts/small
+uv run python -m ptc_demo.benchmark benchmark --out artifacts/full
+uv run python -m ptc_demo.benchmark benchmark --small --out artifacts/small
 
 # Explicit historical fallback (no API key or live calls needed).
-python -m ptc_demo.benchmark show --out artifacts/full/results.json
+uv run python -m ptc_demo.benchmark show --out artifacts/full/results.json
 ```
 
 Use a new output directory for each repeated benchmark to avoid overwriting its
@@ -128,10 +126,11 @@ evidence that PTC itself is unavailable.
 
 ## Databricks
 
-1. Upload/clone the entire project into a Git folder or workspace folder.
-2. Import `notebooks/ptc_demo.py` as a Python source notebook; cell markers are included.
-3. Install `%pip install -r /Workspace/.../ptc_test/requirements.txt` in a setup cell;
-   restart Python if the runtime requests it.
+1. Clone the project into a Databricks Git folder, with `pyproject.toml` at its root.
+2. Attach the notebook to Shared Serverless environment version 5 or later.
+   The project declares environment version 5 in `pyproject.toml`.
+3. Import `notebooks/ptc_demo.py` as a Python source notebook; cell markers are included.
+   Its setup cell runs `%uv sync` to apply `pyproject.toml` and `uv.lock`.
 4. Set `PROJECT_ROOT` to the project folder. Set the secret scope/key in the
    configuration cell, or supply an existing `OPENAI_API_KEY` environment variable.
    The code passes `dbutils.secrets.get(...)` directly to the client without printing it.
@@ -184,7 +183,7 @@ SAVED_SMALL_RESULTS = str(ARTIFACTS / 'live-20261114T053905774830Z/small/results
 Run setup/configuration and the saved-results cell. No key or paid run is needed.
 The same dashboard is generated after live benchmarks. `dashboard.html` is
 exported beside the selected results with Plotly JavaScript embedded for offline
-use. The notebook uses `displayHTML`; re-install `requirements.txt` to add Plotly.
+use. The notebook uses `displayHTML`; rerun `%uv sync` after changing dependencies.
 The existing static PNG remains available for slides.
 
 [Open the exported full/small dashboard](artifacts/live-20261114T053905774830Z/dashboard.html).

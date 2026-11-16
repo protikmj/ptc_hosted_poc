@@ -15,9 +15,12 @@
 # COMMAND ----------
 # MAGIC %md
 # MAGIC ## Setup (before presenting)
-# MAGIC Put this project in a Databricks Git folder or workspace folder. Install with
-# MAGIC `%pip install -r /Workspace/path/to/ptc_test/requirements.txt`, then restart Python if required.
-# MAGIC Set `PROJECT_ROOT` below. Use Python 3.10+; no Spark is required.
+# MAGIC Put this project in a Databricks Git folder and attach Shared Serverless environment
+# MAGIC version 5 or later. The `%uv sync` cell applies dependencies from `pyproject.toml` and
+# MAGIC `uv.lock`. Set `PROJECT_ROOT` below. Use Python 3.10+; no Spark is required.
+
+# COMMAND ----------
+# MAGIC %uv sync
 
 # COMMAND ----------
 import os
